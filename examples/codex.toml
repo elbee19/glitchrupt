@@ -1,0 +1,6 @@
+# Merge this table into the Codex config after replacing the paths.
+# This example does not enable automatic lifecycle hooks.
+[mcp_servers.glitchrupt]
+command = "/absolute/path/to/uv"
+args = ["run", "--locked", "--directory", "/absolute/path/to/glitchrupt", "glitchrupt", "mcp"]
+env = { GLITCHRUPT_APP = "/absolute/path/to/glitchrupt/build/Glitchrupt.app" }

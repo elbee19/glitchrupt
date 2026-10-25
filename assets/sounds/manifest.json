@@ -1,0 +1,56 @@
+{
+  "format_version": 1,
+  "sample_rate": 44100,
+  "duration_ms": 600,
+  "frames": 26460,
+  "channels": 2,
+  "sample_width_bytes": 2,
+  "seed": 88501,
+  "variants": [
+    {
+      "id": "classic",
+      "title": "Classic",
+      "detail": "The original dry digital crackle, with uneven short packets and descending reset pulse.",
+      "file": "classic.wav",
+      "peak": 0.45159912,
+      "rms": 0.14999545,
+      "pcm_sha256": "39c6bc3ba30860cffbd55a22a7e682805969dc55b3828c644700b0e20629b26f"
+    },
+    {
+      "id": "fracture",
+      "title": "Fracture",
+      "detail": "Ragged forward and backward tearing cuts, widening gaps and unstable read-head motion.",
+      "file": "fracture.wav",
+      "peak": 0.40859985,
+      "rms": 0.14999539,
+      "pcm_sha256": "e5ca629f699167677fc808d6129a228a0377a09daa45b0a93fc91a1edb4eb5b6"
+    },
+    {
+      "id": "brownout",
+      "title": "Brownout",
+      "detail": "Darker dirty crackle, sagging low growl and sputtering voltage dropouts.",
+      "file": "brownout.wav",
+      "peak": 0.3855896,
+      "rms": 0.14999537,
+      "pcm_sha256": "1c88dadda5fd6a6143924c8a65486d00141f95435bf75b513b8fcc631ecc165a"
+    },
+    {
+      "id": "arc",
+      "title": "Arc",
+      "detail": "Bright brief electrical sparks, irregular clustered snaps and short dark spaces.",
+      "file": "arc.wav",
+      "peak": 0.60913086,
+      "rms": 0.14999539,
+      "pcm_sha256": "64e9481fce317f967a56e17840cc0784f7a20b311cd1fba3e7885011aee56fa1"
+    },
+    {
+      "id": "stutter",
+      "title": "Stutter",
+      "detail": "A recognizable broken buffer repeats in groups, skips and slows to a stop.",
+      "file": "stutter.wav",
+      "peak": 0.35574341,
+      "rms": 0.14999539,
+      "pcm_sha256": "a5a327250a3997908322d5e83e1ae558ce31fadea5e07f86fb9f9fd81f23557a"
+    }
+  ]
+}

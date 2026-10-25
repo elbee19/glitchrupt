@@ -1,0 +1,82 @@
+import Foundation
+
+@main struct ApprovalRegistryTests {
+    static var assertions = 0
+    static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
+        assertions += 1
+        if !condition() { fatalError(message) }
+    }
+    static func main() {
+        let settings = ApprovalRegistry.Settings(variant: "classic", volume: 0.28, sound: true, preview: false)
+        var state = ApprovalRegistry()
+        expect(ApprovalRegistry.validKey("codex:session-1:tool_2.done"), "valid namespaced key")
+        for invalid in ["", "../test/key", "a b", "é", String(repeating: "a", count: 161)] {
+            expect(!ApprovalRegistry.validKey(invalid), "reject unsafe or oversized key")
+        }
+        expect(state.register("codex:a:1", settings: settings, now: 100), "first wait registers")
+        let different = ApprovalRegistry.Settings(variant: "arc", volume: 0.1, sound: false, preview: true)
+        expect(!state.register("codex:a:1", settings: different, now: 120), "duplicate is idempotent")
+        expect(state.entries["codex:a:1"]?.nextReminderAt == 100, "duplicate must not reset deadline")
+        expect(state.entries["codex:a:1"]?.settings.variant == "classic", "duplicate preserves settings")
+        _ = state.register("codex:b:1", settings: settings, now: 100)
+        let initial = state.claimDue(now: 100)
+        expect(initial.count == 2, "simultaneous approvals coalesce in one group")
+        expect(state.claimDue(now: 999.999).isEmpty, "no reminder before 900 seconds")
+        expect(state.claimDue(now: 1000).count == 2, "both approvals recur after 900 seconds")
+        expect(state.claimDue(now: 1000).isEmpty, "only one claim at the same time")
+        state.record("muted", keys: ["codex:a:1", "codex:b:1"])
+        expect(state.entries["codex:a:1"]?.alertStatus == "muted", "suppression status retained")
+        expect(state.claimDue(now: 1900).count == 2, "paused group still schedules next reminder")
+        expect(state.resolve(key: "codex:a:1") == 1, "resolve one approval")
+        expect(!state.hasAny(["codex:a:1"]), "resolved pair cancels second burst")
+        expect(state.hasAny(["codex:a:1", "codex:b:1"]), "another approval keeps coalesced pair active")
+        expect(state.resolve(prefix: "codex:b:") == 1, "resolve session prefix")
+        expect(state.claimDue(now: 2800).isEmpty, "resolved entries never repeat")
+        expect(state.resolve(key: "missing") == 0, "resolve is idempotent")
+        _ = state.register("sleep:test", settings: settings, now: 0)
+        expect(state.claimDue(now: 90000).count == 1, "long sleep yields one group")
+        expect(state.claimDue(now: 90000).isEmpty, "never replay missed reminders")
+        expect(state.entries["sleep:test"]?.nextReminderAt == 90900, "schedule from current monotonic time")
+        expect((state.snapshot(now: 90001).first?["next_reminder_ms"] as? Int) == 899000, "pending reports remaining milliseconds")
+        state.clear()
+        expect(state.count == 0, "clear pending and process cleanup")
+        expect(state.claimDue(now: 999999).isEmpty, "cleanup leaves no future work")
+        _ = state.register("fallback:one", settings: settings, now: 100)
+        _ = state.claimDue(now: 100)
+        _ = state.register("hook:one", settings: settings, now: 101)
+        expect(state.adoptRecentCue("hook:one", now: 101, lastCueAt: 100, active: true), "hook joins a currently playing approval pair")
+        expect(state.entries["hook:one"]?.nextReminderAt == 1000, "adopted hook shares the original repeat deadline")
+        expect(state.entries["hook:one"]?.alertStatus == "coalesced", "adoption reports coalescing")
+        expect(state.claimDue(now: 105).isEmpty, "adopted key must not cause a second pair after cooldown")
+        _ = state.register("hook:two", settings: settings, now: 104.999)
+        expect(state.adoptRecentCue("hook:two", now: 104.999, lastCueAt: 100), "new key joins recent pair inside five seconds")
+        _ = state.register("later:one", settings: settings, now: 105)
+        expect(!state.adoptRecentCue("later:one", now: 105, lastCueAt: 100), "a new wait at five seconds receives a new alert")
+        expect(state.claimDue(now: 105).map(\.key) == ["later:one"], "genuine later approval remains due")
+        _ = state.register("slow:capture", settings: settings, now: 107)
+        expect(state.adoptRecentCue("slow:capture", now: 107, lastCueAt: 100, active: true), "active pair still coalesces when capture takes longer than five seconds")
+        _ = state.register("first:ever", settings: settings, now: 108)
+        expect(!state.adoptRecentCue("first:ever", now: 108, lastCueAt: nil), "no previous pair cannot suppress an alert")
+        state.clear()
+        let oneShot = ApprovalRegistry.Settings(variant: "classic", volume: 0.28, sound: true, preview: false, repeats: false)
+        _ = state.register("hook:once", settings: oneShot, now: 0)
+        _ = state.register("manual:repeat", settings: settings, now: 0)
+        expect(state.claimDue(now: 0).count == 2, "one-shot and repeating waits share the initial alert")
+        expect(state.claimDue(now: 900).map(\.key) == ["manual:repeat"], "one-shot never becomes due again even before completion cleanup")
+        state.finishEpisode(["hook:once", "manual:repeat"])
+        expect(state.entries["hook:once"] == nil, "one-shot is removed after its episode")
+        expect(state.entries["manual:repeat"] != nil, "explicit repeating wait survives cleanup")
+        _ = state.register("hook:coalesced", settings: oneShot, now: 901)
+        expect(state.adoptRecentCue("hook:coalesced", now: 901, lastCueAt: 900), "one-shot adopts a recent completed episode")
+        state.finishEpisode(["hook:coalesced"])
+        expect(state.entries["hook:coalesced"] == nil, "one-shot coalesced after completion is immediately cleaned")
+        for status in ["muted", "permission_required", "reduce_motion", "error", "cancelled"] {
+            _ = state.register("hook:suppressed", settings: oneShot, now: 902)
+            _ = state.claimDue(now: 902)
+            state.record(status, keys: ["hook:suppressed"])
+            state.finishEpisode(["hook:suppressed"])
+            expect(state.entries["hook:suppressed"] == nil, "suppression, cancellation, and failure cannot orphan a one-shot")
+        }
+        print("ApprovalRegistry: \(assertions) assertions passed")
+    }
+}

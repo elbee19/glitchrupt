@@ -1,0 +1,77 @@
+{
+  "description": "Glitchrupt advisory approval reminders. Replace paths and merge with existing hooks; review and trust in Codex.",
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/uv run --locked --directory /absolute/path/to/glitchrupt glitchrupt hook",
+            "timeout": 3,
+            "statusMessage": "Updating Glitchrupt approval reminders"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/uv run --locked --directory /absolute/path/to/glitchrupt glitchrupt hook",
+            "timeout": 3,
+            "statusMessage": "Updating Glitchrupt approval reminders"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/uv run --locked --directory /absolute/path/to/glitchrupt glitchrupt hook",
+            "timeout": 3,
+            "statusMessage": "Updating Glitchrupt approval reminders"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/uv run --locked --directory /absolute/path/to/glitchrupt glitchrupt hook",
+            "timeout": 3,
+            "statusMessage": "Updating Glitchrupt approval reminders"
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/uv run --locked --directory /absolute/path/to/glitchrupt glitchrupt hook",
+            "timeout": 3,
+            "statusMessage": "Updating Glitchrupt approval reminders"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/uv run --locked --directory /absolute/path/to/glitchrupt glitchrupt hook",
+            "timeout": 3,
+            "statusMessage": "Updating Glitchrupt approval reminders"
+          }
+        ]
+      }
+    ]
+  }
+}

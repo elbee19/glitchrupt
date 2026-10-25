@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "glitchrupt"
+version = "0.3.0"
+description = "Local macOS glitch cues for agents, via CLI and MCP."
+requires-python = ">=3.11"
+dependencies = ["mcp>=2.3,<3"]
+
+[project.scripts]
+glitchrupt = "glitchrupt.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=9.1.1,<10", "pytest-asyncio>=1.4,<2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.hatch.build]
+exclude = ["**/._*", "**/.DS_Store", "**/__pycache__/**"]
