@@ -38,6 +38,14 @@ Run the checksum command from the project root; `SHA256SUMS` records paths relat
 
 A rebuild, changed bundle identifier, different path, or changed signing identity can cause macOS to require Screen Recording authorization again. Keep a stable bundle identifier and signing identity for distributed updates. Do not claim permission approval based only on build success.
 
+## Stable local signing and Screen Recording
+
+Ad-hoc signing ties the designated identity to one exact build. An existing Screen Recording entry can stop matching after a rebuild even when the app name and bundle identifier stay the same. Toggling that stale entry may not repair it.
+
+For local development, choose an existing usable Apple Development or Developer ID certificate with `security find-identity -v -p codesigning`. Save its40-character SHA-1 fingerprint followed by a newline in the checkout's `.signing-identity`, which is ignored by Git and excluded from source archives. `scripts/build.sh` calls the shared `scripts/sign-app.sh`; it uses an explicit `GLITCHRUPT_SIGN_IDENTITY` override, then the local file, then ad-hoc signing if neither exists. A configured signer failure stops the build instead of falling back silently. Private keys stay in Keychain and are not copied into the checkout.
+
+After changing from ad-hoc to certificate signing, install the final app at a stable path and make a fresh Screen Recording entry for that copy. Test the actual app's permission state and desktop capture. Matching designated requirements across two signed builds establishes identity stability; it does not prove that macOS granted capture access. Normal updates should preserve the same bundle identifier and certificate identity. A local Apple Development signature is not a notarized public Developer ID distribution; release signing still follows the section below.
+
 ## Publishing the source repository
 
 Start from the audited source ZIP when local history or handoffs contain private setup details. Extract it into a separate checkout and use a GitHub noreply commit identity. Preserve the development checkout and its history locally. The source archive includes only the named synthetic demo GIF, MP4, and poster; its renderer inputs and regeneration steps are documented in [demo provenance](demo.md). Do not add real desktop recordings or screenshots.
@@ -46,7 +54,7 @@ Check the exported files, commit metadata, media, and README links before pushin
 
 ## Public downloadable apps
 
-The default build is **ad-hoc signed**. This verifies local bundle integrity but does not identify a trusted publisher to Gatekeeper. It is suitable for development on the build Mac; it is not a notarized public release.
+Without a configured signing identity, the default build is **ad-hoc signed**. This verifies local bundle integrity but does not identify a trusted publisher to Gatekeeper. It is suitable for development on the build Mac; it is not a notarized public release.
 
 Before offering compiled downloads:
 

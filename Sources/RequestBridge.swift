@@ -14,6 +14,10 @@ struct AgentRequest: Decodable {
     let key: String?
     let key_prefix: String?
     let `repeat`: Bool?
+    let chat_name: String?
+    let reason: String?
+    let chat_id: String?
+    let claude_session_id: String?
 }
 
 @MainActor extension Controller {
@@ -86,7 +90,7 @@ struct AgentRequest: Decodable {
         do {
             try prepareRequestDirectory()
             let data = try readPrivateRequest(path)
-            let allowed: Set<String> = ["id", "action", "variant", "duration_ms", "volume", "sound", "preview", "key", "key_prefix", "repeat"]
+            let allowed: Set<String> = ["id", "action", "variant", "duration_ms", "volume", "sound", "preview", "key", "key_prefix", "repeat", "chat_name", "reason", "chat_id", "claude_session_id"]
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], Set(object.keys).isSubset(of: allowed) else { throw Failure.message("Invalid request fields") }
             let request = try JSONDecoder().decode(AgentRequest.self, from: data)
             guard UUID(uuidString: request.id) == uuid else { throw Failure.message("Request ID mismatch") }
@@ -95,7 +99,7 @@ struct AgentRequest: Decodable {
             if request.action == "status" {
                 writeResponse(id, ["status": "ready", "permission": CGPreflightScreenCaptureAccess(), "reduce_motion": NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
                                    "agents_enabled": agentsEnabled, "busy": busy, "cooldown_remaining_ms": cooldownRemaining,
-                                   "app_version": "0.3.0", "pending_count": approvalRegistry.count, "variants": SoundChoice.allCases.map(\.id), "tester_visible": window?.isVisible ?? false])
+                                   "app_version": "0.4.0", "pending_count": approvalRegistry.count, "variants": SoundChoice.allCases.map(\.id), "tester_visible": window?.isVisible ?? false])
                 return
             }
             if request.action == "pending" {
@@ -113,9 +117,15 @@ struct AgentRequest: Decodable {
                 return
             }
             if request.action == "wait" {
-                guard Set(object.keys).isSubset(of: ["id", "action", "key", "variant", "volume", "sound", "preview", "repeat"]),
+                guard Set(object.keys).isSubset(of: ["id", "action", "key", "variant", "volume", "sound", "preview", "repeat", "chat_name", "reason", "chat_id", "claude_session_id"]),
                       let key = request.key, ApprovalRegistry.validKey(key),
                       let variant = SoundChoice(id: request.variant ?? "classic") else { throw Failure.message("Invalid wait fields") }
+                guard ApprovalRegistry.Context.validText(request.chat_name, maximum: 100),
+                      ApprovalRegistry.Context.validText(request.reason, maximum: 240),
+                      ApprovalRegistry.Context.validChatID(request.chat_id),
+                      ApprovalRegistry.Context.validClaudeSessionID(request.claude_session_id),
+                      request.chat_id == nil || request.claude_session_id == nil else { throw Failure.message("Invalid request context") }
+                let context = ApprovalRegistry.Context(chatName: request.chat_name, reason: request.reason, chatID: request.chat_id, claudeSessionID: request.claude_session_id)
                 let volume = request.volume ?? 0.28
                 guard volume.isFinite, (0...0.5).contains(volume) else { throw Failure.message("Settings out of bounds") }
                 guard approvalRegistry.entries[key] != nil || approvalRegistry.count < ApprovalRegistry.maximumCount else {
@@ -123,14 +133,17 @@ struct AgentRequest: Decodable {
                 }
                 let settings = ApprovalRegistry.Settings(variant: variant.id, volume: Float(volume), sound: request.sound ?? true, preview: request.preview ?? false, repeats: request.`repeat` ?? true)
                 let now = approvalNow
-                let added = approvalRegistry.register(key, settings: settings, now: now)
+                let added = approvalRegistry.register(key, settings: settings, context: context, now: now)
                 let adopted = added && approvalRegistry.adoptRecentCue(key, now: now, lastCueAt: lastApprovalCueAt, active: approvalPairRunning)
-                if adopted { approvalEpisodeKeys.insert(key) }
+                if adopted {
+                    approvalEpisodeKeys.insert(key)
+                    if !approvalPairRunning && attentionBanner.isVisible { attentionBannerKeys.insert(key) }
+                }
                 let repeats = approvalRegistry.entries[key]?.settings.repeats ?? settings.repeats
                 if adopted && !approvalPairRunning { approvalRegistry.finishEpisode([key]) }
                 updatePendingCount()
                 let status = adopted ? "coalesced" : (added ? (approvalSuppression(preview: settings.preview) ?? "queued") : (approvalRegistry.entries[key]?.alertStatus ?? "queued"))
-                writeResponse(id, ["status": "waiting", "key": key, "pending_count": approvalRegistry.count, "repeat_interval_ms": 900000, "burst_duration_ms": 600, "gap_ms": 200, "alert_status": status, "duplicate": !added, "repeat": repeats])
+                writeResponse(id, ["status": "waiting", "key": key, "pending_count": approvalRegistry.count, "repeat_interval_ms": 900000, "burst_duration_ms": 600, "gap_ms": 200, "pattern_glitches": approvalPair ? 2 : 1, "pattern_gap_ms": approvalGapMS, "alert_status": status, "duplicate": !added, "repeat": repeats])
                 if added && !adopted { scheduleApprovalDispatch() }
                 return
             }
@@ -141,7 +154,7 @@ struct AgentRequest: Decodable {
             let previewOnly = request.preview ?? false
             let base: [String: Any] = ["variant": variant.id, "duration_ms": ms, "mode": previewOnly ? "preview" : "desktop"]
             func suppress(_ status: String) { var result = base; result["status"] = status; result["cooldown_remaining_ms"] = cooldownRemaining; writeResponse(id, result) }
-            guard agentsEnabled else { suppress("muted"); return }
+            guard agentCuesActive else { suppress("muted"); return }
             guard !busy else { suppress("busy"); return }
             guard cooldownRemaining == 0 else { suppress("cooldown"); return }
             let settings = CueSettings(choice: variant, duration: Double(ms) / 1000, volume: Float(volume), sound: (request.sound ?? true) && soundEnabled)

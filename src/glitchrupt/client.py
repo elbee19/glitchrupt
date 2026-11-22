@@ -13,8 +13,10 @@ from pathlib import Path
 import stat
 import subprocess
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 import uuid
+
+CLAUDE_HOST_SESSION_ENV = "CLAUDE_CODE_HOST_SESSION_ID"
 
 VARIANTS = {
     "classic": "Original digital crackle: balanced static and electrical ticks.",
@@ -57,6 +59,87 @@ def validate_key(value: str, field: str = "key") -> str:
     return value
 
 
+def validate_metadata_text(value: str, field: str, limit: int) -> str:
+    """Single-line labels use Unicode codepoints, matching the native contract."""
+    if not isinstance(value, str) or any(ord(char) < 32 or 127 <= ord(char) <= 159
+                                         or 0xD800 <= ord(char) <= 0xDFFF
+                                         or char in "\u2028\u2029" for char in value):
+        raise GlitchruptError("invalid_argument", field + " must be a single line without control characters")
+    value = value.strip()
+    if not 1 <= len(value) <= limit:
+        raise GlitchruptError("invalid_argument", field + f" must contain 1–{limit} characters after trimming")
+    return value
+
+
+def validate_chat_id(value: str) -> str:
+    if not isinstance(value, str):
+        raise GlitchruptError("invalid_argument", "chat_id must be a canonical lowercase UUID")
+    try:
+        valid = str(uuid.UUID(value)) == value
+    except ValueError:
+        valid = False
+    if not valid:
+        raise GlitchruptError("invalid_argument", "chat_id must be a canonical lowercase UUID")
+    return value
+
+
+def validate_claude_session_id(value: str) -> str:
+    if not isinstance(value, str) or not value.startswith("local_"):
+        raise GlitchruptError("invalid_argument", "claude_session_id must be local_ followed by a canonical lowercase UUID")
+    validate_chat_id(value[6:])
+    return value
+
+
+def default_claude_session_id(env: Mapping[str, str] | None = None) -> str | None:
+    """Claude Desktop session that Claude Code exports to its child processes, or None.
+
+    Never raises: a missing, malformed or unexpected value is simply ignored.
+    """
+    try:
+        value = (os.environ if env is None else env).get(CLAUDE_HOST_SESSION_ENV)
+        return validate_claude_session_id(value) if isinstance(value, str) else None
+    except (GlitchruptError, AttributeError, TypeError):
+        return None
+
+
+def with_default_claude_session(metadata: dict[str, str]) -> dict[str, str]:
+    """Fill in the detected Claude Desktop session only when no chat was named.
+
+    An explicit claude_session_id wins, and a chat_id (Codex) suppresses the default.
+    Call this only from user-facing entry points; hooks never use the default.
+    """
+    if "chat_id" in metadata or "claude_session_id" in metadata:
+        return metadata
+    session = default_claude_session_id()
+    return {**metadata, "claude_session_id": session} if session is not None else metadata
+
+
+def validate_wait_metadata(*, claude_session_id: str | None = None, chat_name: str | None = None, reason: str | None = None,
+                           chat_id: str | None = None) -> dict[str, str]:
+    metadata = {}
+    if chat_id is not None and claude_session_id is not None:
+        raise GlitchruptError("invalid_argument", "provide only one chat identifier")
+    if claude_session_id is not None:
+        metadata["claude_session_id"] = validate_claude_session_id(claude_session_id)
+    if chat_name is not None:
+        metadata["chat_name"] = validate_metadata_text(chat_name, "chat_name", 100)
+    if reason is not None:
+        metadata["reason"] = validate_metadata_text(reason, "reason", 240)
+    if chat_id is not None:
+        metadata["chat_id"] = validate_chat_id(chat_id)
+    return metadata
+
+
+def _valid_response_metadata(value: dict[str, Any]) -> bool:
+    supplied = {field: value[field] for field in ("chat_name", "reason", "chat_id", "claude_session_id") if field in value}
+    if any(item is None for item in supplied.values()):
+        return False
+    try:
+        return validate_wait_metadata(**supplied) == supplied
+    except GlitchruptError:
+        return False
+
+
 def validate_response(action: str, result: dict[str, Any]) -> None:
     """Reject malformed success payloads instead of claiming an alert is scheduled."""
     expected = {"status": "ready", "wait": "waiting", "resolve": "resolved", "pending": "pending"}
@@ -79,7 +162,8 @@ def validate_response(action: str, result: dict[str, Any]) -> None:
                      and result.get("burst_duration_ms") == 600 and type(result["burst_duration_ms"]) is int
                      and result.get("gap_ms") == 200 and type(result["gap_ms"]) is int
                      and isinstance(result.get("alert_status"), str)
-                     and type(result.get("repeat")) is bool)
+                     and type(result.get("repeat")) is bool
+                     and _valid_response_metadata(result))
         elif action == "resolve":
             valid = valid and type(result.get("removed_count")) is int and 0 <= result["removed_count"] <= 256
         else:
@@ -89,6 +173,7 @@ def validate_response(action: str, result: dict[str, Any]) -> None:
                 valid = all(isinstance(entry, dict) and isinstance(entry.get("key"), str)
                             and re.fullmatch(KEY_PATTERN, entry["key"]) is not None
                             and type(entry.get("next_reminder_ms")) is int and entry["next_reminder_ms"] >= 0
+                            and _valid_response_metadata(entry)
                             for entry in entries)
     else:
         valid = True
@@ -153,13 +238,16 @@ class NativeClient:
         return self.request("signal", **payload)
 
     def wait(self, key: str, variant: str = "classic", volume: float = .28,
-             sound: bool = True, preview: bool = False, *, repeat: bool = True) -> dict[str, Any]:
+             sound: bool = True, preview: bool = False, *, repeat: bool = True,
+             chat_name: str | None = None, reason: str | None = None,
+             chat_id: str | None = None, claude_session_id: str | None = None) -> dict[str, Any]:
         key = validate_key(key)
         if type(repeat) is not bool:
             raise GlitchruptError("invalid_argument", "repeat must be a boolean")
         payload = validate_signal(variant, 600, volume, sound, preview)
         payload.pop("duration_ms")
         payload["repeat"] = repeat
+        payload.update(validate_wait_metadata(chat_name=chat_name, reason=reason, chat_id=chat_id, claude_session_id=claude_session_id))
         result = self.request("wait", key=key, **payload)
         if result.get("status") == "waiting" and (result.get("key") != key or result.get("repeat") is not repeat):
             raise GlitchruptError("invalid_response", "The app registered a different approval key or repetition mode.")

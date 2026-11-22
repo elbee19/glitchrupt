@@ -53,3 +53,21 @@ Desktop playback under this final build depends on its Screen Recording permissi
 ## Final desktop setup check
 
 On 2026-10-25 the user enabled capture for the final0.3.0 build and approved exactly one desktop test pair. Readiness reported permissiontrue. One pair completed across two displays with sound; measured gap210ms and total1411ms against targets200ms and1400ms. The one-shot registration removed itself and pending_count returned0. The global approval-attention rule was then applied with the clarified stopping condition: user response OR task unblocked, whichever happens first.
+
+## 0.4.0 attribution checks
+
+-99 Python tests pass, including metadata bounds/controls/UUID validation, backward compatibility and CLI/SDK forwarding.
+-48 existing reminder state assertions and31 attribution/handover assertions pass. Final app compiles with warnings-as-errors and strict signature verification.
+-Real MCP SDK to the installed app verified attributed registration, duplicate context enrichment without replay/deadline reset, native rejection of malformed context, and exact test-key resolution preserving a peer request.
+-An actual0.3→0.4 upgrade preserved a registered peer’s key and remaining deadline through the explicit private handover, without an initial replay.
+-The installed0.4 app reports screen access unavailable after its signing identity changed. Static banner delivery was exercised; an end-to-end desktop pair followed by its banner remains dependent on the user's permission refresh. No private desktop screenshots were saved for documentation.
+
+## Stable signing verification
+
+The local ad-hoc app and source build had the same exact-code designated requirement, yet the actual running app reported capturepermissionfalse after the user's toggle/reopen attempts. An existing Apple Development certificate signed two temporary copies with different bundle build numbers: fingerprints differed, while certificate-based designated requirements matched and strict signature verification passed. This proves identity stability, not granted Screen Recording authorization.
+
+The shared sign-app helper reads explicit environment configuration or an ignored local certificate fingerprint, failing closed for malformed configuration or signer failure. A malformed configuration test stopped before signing. The installed app is certificate-signed, and source archive audit excluded the local fingerprint file and contents. A fresh permission entry for the new signer remains a human OS action; capture success must be verified separately.
+
+### Certificate-signed desktop verification
+
+After the user removed/re-added the installed app and enabled its fresh permission entry, native status reported permissiontrue. One authorized test registration completed across two displays with metadata and the banner presentation path. The measured pair was1423ms total with221ms gap (nominal1400/200); overlays were cleaned up and busy returnedfalse. The test key was then resolved after the banner display interval. No desktop images were saved. Two independent peer waits appeared during verification and were preserved. Pixel-level banner appearance was not independently inspected.

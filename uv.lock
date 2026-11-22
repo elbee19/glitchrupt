@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-18T21:12:39.424544Z"
+exclude-newer = "2026-10-19T17:56:40.82045Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -229,7 +229,7 @@ wheels = [
 
 [[package]]
 name = "glitchrupt"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },

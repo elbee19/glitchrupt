@@ -16,6 +16,12 @@ It works over your other apps, even with Codex in the background. Everything run
 
 [How the demo is made](docs/demo.md).
 
+## Know who needs you
+
+After a request's glitch, a small banner names the chat and explains what it needs. It appears at the top-right of the display under your pointer for eight seconds; hover to keep it visible. **Open chat** takes you there without approving anything.
+
+Requests stay under **Waiting for input** in the menu bar after the banner disappears. The agent's resolve call removes its entry and any visible banner; opening a chat does not resolve it. Agents supply a short chat name, reason, and real Codex chat ID. Older callers still work, with an unnamed-request fallback until they supply context. The menu also has a **Preview attention banner** option.
+
 ## Pick your noise
 
 Five original crackles: **Classic, Fracture, Brownout, Arc, Stutter**. Open the desktop tester and hit **Compare all five**. Windowed previews work without screen capture.
@@ -48,9 +54,9 @@ uv run --locked glitchrupt status
 uv run --locked glitchrupt mcp
 ```
 
-[Connect it to Codex](docs/codex-integration.md), or use the [other-agent setup and tool reference](docs/agent-usage.md). MCP registration is a separate setup step. For an approval wait, Glitchrupt plays **600 ms → 200 ms gap → 600 ms**, then repeats every **15 minutes** until the agent resolves it. Duplicate registrations do not replay the cue.
+[Connect it to Codex](docs/codex-integration.md), or use the [other-agent setup and tool reference](docs/agent-usage.md). MCP registration is a separate setup step. For an approval wait, Glitchrupt plays one 600 ms glitch by default; the menu can enable a second glitch and set its gap. It then repeats every **15 minutes** until the agent resolves it. Duplicate registrations do not replay the cue.
 
-The optional Codex hook handles the initial double cue. Automatic repeats require an explicit wait/resolve workflow because the available desktop hook events cannot reliably confirm when an approval was answered. [Approval setup and limits](docs/approval-alerts.md).
+The optional Codex hook handles the initial configured cue. Automatic repeats require an explicit wait/resolve workflow because the available desktop hook events cannot reliably confirm when an approval was answered. [Approval setup and limits](docs/approval-alerts.md).
 
 ## Make it yours
 

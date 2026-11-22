@@ -12,6 +12,7 @@ enum Failure: Error, CustomStringConvertible {
 }
 struct Options {
     var agentMode = false
+    var handoverPath: String?
     var renderPath: String?
     var status = false
     var verifySounds = false
@@ -31,6 +32,7 @@ struct Options {
             }
             switch arg {
             case "--agent-mode": agentMode = true
+            case "--handover": handoverPath = try next()
             case "--preview": break
             case "--status": status = true
             case "--verify-sounds": verifySounds = true
@@ -82,6 +84,7 @@ func savePNG(_ image: CGImage, _ path: String) throws {
     var playbackButtons: [NSButton] = []
     var menuItem: NSStatusItem?
     var agentsMenuItem: NSMenuItem?
+    var agentMuteTimer: Timer?
     var receivedURL = false
     var soundFailure = false
     var lastAgentCueAt: CFTimeInterval?
@@ -90,6 +93,13 @@ func savePNG(_ image: CGImage, _ path: String) throws {
     var approvalRegistry = ApprovalRegistry()
     var approvalTimer: Timer?
     var approvalCountItem: NSMenuItem?
+    var pendingRequestsMenu: NSMenu?
+    var approvalPatternMenu: NSMenu?
+    var approvalGapMenu: NSMenu?
+    var approvalPair: Bool { UserDefaults.standard.bool(forKey: "approvalPair") }
+    var approvalGapMS: Int { min(2000, max(0, UserDefaults.standard.integer(forKey: "approvalGapMS"))) }
+    let attentionBanner = AttentionBanner()
+    var attentionBannerKeys = Set<String>()
     var approvalDispatchScheduled = false
     var lastApprovalCueAt: CFTimeInterval?
     var approvalPairRunning = false
@@ -100,10 +110,21 @@ func savePNG(_ image: CGImage, _ path: String) throws {
         guard let lastAgentCueAt else { return 0 }
         return max(0, Int(ceil((5 - (CACurrentMediaTime() - lastAgentCueAt)) * 1000)))
     }
+    /// Wall-clock end of a timed "mute all agent cues" (for example, one hour). Survives relaunch.
+    var agentCuesMutedUntil: Date? {
+        get { UserDefaults.standard.object(forKey: "agentCuesMutedUntil") as? Date }
+        set {
+            if let newValue { UserDefaults.standard.set(newValue, forKey: "agentCuesMutedUntil") }
+            else { UserDefaults.standard.removeObject(forKey: "agentCuesMutedUntil") }
+        }
+    }
+    var timedMuteActive: Bool { (agentCuesMutedUntil ?? .distantPast) > Date() }
+    /// What every agent cue path checks. The settings toggle stays bound to agentsEnabled alone.
+    var agentCuesActive: Bool { agentsEnabled && !timedMuteActive }
 
     init(options: Options) {
         self.options = options
-        UserDefaults.standard.register(defaults: ["agentsEnabled": true])
+        UserDefaults.standard.register(defaults: ["agentsEnabled": true, "approvalPair": false, "approvalGapMS": 200])
         soundEnabled = !options.muted
         agentsEnabled = UserDefaults.standard.bool(forKey: "agentsEnabled")
         selectedSound = options.soundChoice ?? SoundChoice(rawValue: UserDefaults.standard.integer(forKey: "soundChoice")) ?? .classic
@@ -133,7 +154,9 @@ func savePNG(_ image: CGImage, _ path: String) throws {
             } catch { log("ERROR \(error)"); exit(1) }
             NSApp.terminate(nil); return
         }
+        if let path = options.handoverPath { restoreApprovalHandover(path) }
         setupMenuBar()
+        scheduleTimedMuteExpiry()
         approvalTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.processDueApprovals() }
         }
@@ -142,7 +165,7 @@ func savePNG(_ image: CGImage, _ path: String) throws {
                 if let self, !self.receivedURL { self.showTester() }
             }
         }
-        log("APP_READY version=0.3.0 agent_mode=\(options.agentMode)")
+        log("APP_READY version=0.4.0 agent_mode=\(options.agentMode)")
     }
     func application(_ application: NSApplication, open urls: [URL]) {
         receivedURL = true
@@ -152,7 +175,7 @@ func savePNG(_ image: CGImage, _ path: String) throws {
         showTester(); return true
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
-    func applicationWillTerminate(_ notification: Notification) { approvalTimer?.invalidate(); approvalRegistry.clear(); cleanUp(); sound?.shutDown() }
+    func applicationWillTerminate(_ notification: Notification) { approvalTimer?.invalidate(); approvalRegistry.clear(); attentionBanner.dismiss(); cleanUp(); sound?.shutDown() }
     func setupMenuBar() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let imageURL = Bundle.main.url(forResource: "MenuIcon", withExtension: "png"), let image = NSImage(contentsOf: imageURL) {
@@ -166,16 +189,42 @@ func savePNG(_ image: CGImage, _ path: String) throws {
         enabled.target = self; enabled.state = agentsEnabled ? .on : .off
         menu.addItem(enabled); agentsMenuItem = enabled
         menu.addItem(.separator())
-        let count = NSMenuItem(title: "Pending approvals: 0", action: nil, keyEquivalent: "")
-        menu.addItem(count); approvalCountItem = count
-        let pair = NSMenuItem(title: "Preview approval pair (600 + 200 + 600 ms)", action: #selector(previewApprovalPair), keyEquivalent: "")
+        let count = NSMenuItem(title: "Waiting for input (0)", action: nil, keyEquivalent: "")
+        let requests = NSMenu(); count.submenu = requests; pendingRequestsMenu = requests
+        menu.addItem(count); approvalCountItem = count; updatePendingCount()
+        let pattern = NSMenuItem(title: "Attention pattern", action: nil, keyEquivalent: "")
+        let patternMenu = NSMenu(); pattern.submenu = patternMenu; approvalPatternMenu = patternMenu; menu.addItem(pattern)
+        let gap = NSMenuItem(title: "Gap between glitches", action: nil, keyEquivalent: "")
+        let gapMenu = NSMenu(); gap.submenu = gapMenu; approvalGapMenu = gapMenu; menu.addItem(gap)
+        rebuildApprovalPatternMenus()
+        let pair = NSMenuItem(title: "Preview attention pattern", action: #selector(previewApprovalPair), keyEquivalent: "")
         pair.target = self; menu.addItem(pair)
+        let bannerPreview = NSMenuItem(title: "Preview attention banner", action: #selector(previewAttentionBanner), keyEquivalent: "")
+        bannerPreview.target = self; menu.addItem(bannerPreview)
         let clear = NSMenuItem(title: "Clear pending approval reminders", action: #selector(clearPendingApprovals), keyEquivalent: "")
         clear.target = self; menu.addItem(clear)
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit Glitchrupt", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self; menu.addItem(quitItem)
         item.menu = menu; menuItem = item
+    }
+    func rebuildApprovalPatternMenus() {
+        guard let pattern = approvalPatternMenu, let gaps = approvalGapMenu else { return }
+        pattern.removeAllItems(); gaps.removeAllItems()
+        for (title, isPair) in [("One glitch", false), ("Two glitches", true)] {
+            let item = NSMenuItem(title: title, action: #selector(selectApprovalPattern(_:)), keyEquivalent: "")
+            item.target = self; item.tag = isPair ? 2 : 1; item.state = approvalPair == isPair ? .on : .off; pattern.addItem(item)
+        }
+        for ms in stride(from: 0, through: 2000, by: 100) {
+            let item = NSMenuItem(title: "\(ms) ms", action: #selector(selectApprovalGap(_:)), keyEquivalent: "")
+            item.target = self; item.tag = ms; item.state = approvalGapMS == ms ? .on : .off; gaps.addItem(item)
+        }
+    }
+    @objc func selectApprovalPattern(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.tag == 2, forKey: "approvalPair"); rebuildApprovalPatternMenus()
+    }
+    @objc func selectApprovalGap(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.tag, forKey: "approvalGapMS"); rebuildApprovalPatternMenus()
     }
     @objc func openTester() { showTester() }
     func showTester() {
@@ -226,11 +275,50 @@ func savePNG(_ image: CGImage, _ path: String) throws {
     }
     @objc func toggleSound(_ sender: NSButton) { soundEnabled = sender.state == .on; if !soundEnabled { sound?.shutDown(); sound = nil } }
     @objc func toggleAgents(_ sender: NSButton) { setAgentsEnabled(sender.state == .on) }
-    @objc func toggleAgentsFromMenu() { setAgentsEnabled(!agentsEnabled) }
+    /// While a timed mute is running, clicking the menu item ends the mute instead of toggling the setting.
+    @objc func toggleAgentsFromMenu() {
+        if agentsEnabled && timedMuteActive { clearTimedAgentMute(); statusLabel?.stringValue = "Agent cues resumed."; return }
+        setAgentsEnabled(!agentsEnabled)
+    }
     func setAgentsEnabled(_ value: Bool) {
-        agentsEnabled = value; UserDefaults.standard.set(value, forKey: "agentsEnabled")
-        agentsToggle?.state = value ? .on : .off; agentsMenuItem?.state = value ? .on : .off
+        agentsEnabled = value; if !value { attentionBanner.dismiss() }; UserDefaults.standard.set(value, forKey: "agentsEnabled")
+        // An explicit enable ends any timed mute, so the checked setting always means cues play.
+        if value, agentCuesMutedUntil != nil { clearTimedAgentMute() }
+        agentsToggle?.state = value ? .on : .off; refreshAgentsMenu()
         statusLabel?.stringValue = value ? "Agent cues enabled." : "Agent cues paused. Manual previews remain available."
+    }
+    /// Mutes every agent cue until the wall-clock deadline. Pending requests stay registered and are not replayed later.
+    func startTimedAgentMute(for seconds: TimeInterval) {
+        let until = Date().addingTimeInterval(seconds)
+        agentCuesMutedUntil = until
+        attentionBanner.dismiss(); scheduleTimedMuteExpiry()
+        statusLabel?.stringValue = "Agent cues muted until \(until.formatted(date: .omitted, time: .shortened)). Manual previews remain available."
+    }
+    func clearTimedAgentMute() {
+        agentCuesMutedUntil = nil; agentMuteTimer?.invalidate(); agentMuteTimer = nil; refreshAgentsMenu()
+    }
+    /// Arms one timer for the current timed mute. Expired values left in UserDefaults are cleared at launch.
+    func scheduleTimedMuteExpiry() {
+        agentMuteTimer?.invalidate(); agentMuteTimer = nil
+        if let until = agentCuesMutedUntil, until.timeIntervalSinceNow > 0 {
+            agentMuteTimer = Timer.scheduledTimer(withTimeInterval: until.timeIntervalSinceNow, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.clearTimedAgentMute() }
+            }
+        } else if agentCuesMutedUntil != nil {
+            clearTimedAgentMute()
+        }
+        refreshAgentsMenu()
+    }
+    /// Keeps the checkmark bound to agentsEnabled. While a timed mute runs, the title says when cues return.
+    func refreshAgentsMenu() {
+        guard let item = agentsMenuItem else { return }
+        if agentsEnabled && timedMuteActive, let until = agentCuesMutedUntil {
+            item.title = "Agent cues muted until \(until.formatted(date: .omitted, time: .shortened))"
+            item.state = .mixed
+        } else {
+            item.title = "Agent cues enabled"
+            item.state = agentsEnabled ? .on : .off
+        }
     }
     @objc func requestPermission() {
         _ = CGRequestScreenCaptureAccess()
@@ -281,7 +369,7 @@ func savePNG(_ image: CGImage, _ path: String) throws {
         DispatchQueue.main.asyncAfter(deadline: .now() + tail) { previous.shutDown() }
     }
     func cleanUp() { timer?.invalidate(); timer = nil; for panel in overlays { panel.orderOut(nil); panel.close() }; overlays.removeAll() }
-    @discardableResult func executeCue(settings: CueSettings, previewOnly: Bool, delay: Double, pair: Bool = false, shouldContinue: @escaping @MainActor () -> Bool = { true }, completion: @escaping @MainActor ([String: Any]) -> Void) -> Bool {
+    @discardableResult func executeCue(settings: CueSettings, previewOnly: Bool, delay: Double, pair: Bool = false, gapMS: Int = 200, shouldContinue: @escaping @MainActor () -> Bool = { true }, completion: @escaping @MainActor ([String: Any]) -> Void) -> Bool {
         let base: [String: Any] = ["variant": settings.choice.id, "duration_ms": Int(settings.duration * 1000), "mode": previewOnly ? "preview" : "desktop"]
         func reject(_ status: String) { var result = base; result["status"] = status; completion(result) }
         guard !busy else { reject("busy"); return false }
@@ -303,13 +391,13 @@ func savePNG(_ image: CGImage, _ path: String) throws {
                         animate(views: [preview], onStart: { firstStartedAt = $0 }) { firstEndedAt = CACurrentMediaTime(); continuation.resume() }
                     }; burstsCompleted = 1
                     if pair {
-                        if try await playSecondApprovalBurst(views: [preview], firstStartedAt: firstStartedAt, firstEndedAt: firstEndedAt, previewOnly: true, shouldContinue: shouldContinue) { burstsCompleted = 2 }
+                        if try await playSecondApprovalBurst(views: [preview], firstStartedAt: firstStartedAt, firstEndedAt: firstEndedAt, previewOnly: true, gapMS: gapMS, shouldContinue: shouldContinue) { burstsCompleted = 2 }
                     }
-                } else { burstsCompleted = try await captureAndPlay(pair: pair, shouldContinue: shouldContinue) }
+                } else { burstsCompleted = try await captureAndPlay(pair: pair, gapMS: gapMS, shouldContinue: shouldContinue) }
                 let audioPlayed = settings.sound && !soundFailure
                 cleanUp(); finishSound(); activeSettings = nil; setBusy(false)
-                var result = base; result["status"] = pair && burstsCompleted < 2 ? "cancelled" : "completed"; result["sound"] = audioPlayed
-                if pair { result["bursts_completed"] = burstsCompleted; result["gap_ms"] = 200 }
+                var result = base; result["status"] = burstsCompleted < (pair ? 2 : 1) ? "cancelled" : "completed"; result["sound"] = audioPlayed
+                if pair { result["bursts_completed"] = burstsCompleted; result["gap_ms"] = gapMS }
                 if soundFailure { result["warning"] = "Audio unavailable; visual cue completed" }
                 statusLabel?.stringValue = "Cue complete · \(settings.choice.name) · \(Int(settings.duration * 1000)) ms"
                 completion(result); log("CUE_COMPLETE mode=\(previewOnly ? "preview" : "desktop") variant=\(settings.choice.id) overlays=0")
@@ -321,7 +409,7 @@ func savePNG(_ image: CGImage, _ path: String) throws {
         }
         return true
     }
-    func captureAndPlay(pair: Bool = false, shouldContinue: @escaping @MainActor () -> Bool = { true }) async throws -> Int {
+    func captureAndPlay(pair: Bool = false, gapMS: Int = 200, shouldContinue: @escaping @MainActor () -> Bool = { true }) async throws -> Int {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         var ready: [(NSScreen, GlitchRenderer)] = []
         for screen in NSScreen.screens {
@@ -332,7 +420,7 @@ func savePNG(_ image: CGImage, _ path: String) throws {
             ready.append((screen, try GlitchRenderer(image: image)))
         }
         guard !ready.isEmpty else { throw Failure.message("No capturable displays") }
-        if pair && (!shouldContinue() || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion) { return 0 }
+        if !shouldContinue() || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { return 0 }
         var views: [EffectView] = []
         for (screen, renderer) in ready {
             let panel = OverlayPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -348,11 +436,11 @@ func savePNG(_ image: CGImage, _ path: String) throws {
             animate(views: views, onStart: { firstStartedAt = $0 }) { firstEndedAt = CACurrentMediaTime(); continuation.resume() }
         }
         if pair {
-            if try await playSecondApprovalBurst(views: views, firstStartedAt: firstStartedAt, firstEndedAt: firstEndedAt, previewOnly: false, shouldContinue: shouldContinue) { return 2 }
+            if try await playSecondApprovalBurst(views: views, firstStartedAt: firstStartedAt, firstEndedAt: firstEndedAt, previewOnly: false, gapMS: gapMS, shouldContinue: shouldContinue) { return 2 }
         }
         return 1
     }
-    func playSecondApprovalBurst(views: [EffectView], firstStartedAt: CFTimeInterval, firstEndedAt: CFTimeInterval, previewOnly: Bool, shouldContinue: @escaping @MainActor () -> Bool) async throws -> Bool {
+    func playSecondApprovalBurst(views: [EffectView], firstStartedAt: CFTimeInterval, firstEndedAt: CFTimeInterval, previewOnly: Bool, gapMS: Int, shouldContinue: @escaping @MainActor () -> Bool) async throws -> Bool {
         finishSound()
         if !previewOnly { for panel in overlays { panel.orderOut(nil) } }
         // Restore the screen and prepare audio inside the gap, then wait only its remainder.
@@ -360,17 +448,17 @@ func savePNG(_ image: CGImage, _ path: String) throws {
         for view in views { view.progress = 0; view.needsDisplay = true; view.displayIfNeeded() }
         guard shouldContinue(), previewOnly || !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return false }
         prepareSound()
-        let remaining = firstEndedAt + 0.2 - CACurrentMediaTime()
+        let remaining = firstEndedAt + Double(gapMS) / 1000 - CACurrentMediaTime()
         if remaining > 0 { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) }
         guard shouldContinue(), previewOnly || !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return false }
         if !previewOnly { for panel in overlays { panel.orderFrontRegardless() } }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             animate(views: views, onStart: { started in
                 let elapsed = (started - firstEndedAt) * 1000
-                log("PAIR_GAP elapsed_ms=\(Int(elapsed.rounded())) target_ms=200 slip_ms=\(max(0, Int((elapsed - 200).rounded())))")
+                log("PAIR_GAP elapsed_ms=\(Int(elapsed.rounded())) target_ms=\(gapMS) slip_ms=\(max(0, Int((elapsed - Double(gapMS)).rounded())))")
             }) { continuation.resume() }
         }
-        log("PAIR_DURATION elapsed_ms=\(Int(((CACurrentMediaTime() - firstStartedAt) * 1000).rounded())) target_ms=1400")
+        log("PAIR_DURATION elapsed_ms=\(Int(((CACurrentMediaTime() - firstStartedAt) * 1000).rounded())) target_ms=\(1200 + gapMS)")
         return true
     }
     func animate(views: [EffectView], onStart: (@MainActor (CFTimeInterval) -> Void)? = nil, completion: @escaping @MainActor () -> Void) {

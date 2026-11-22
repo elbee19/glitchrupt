@@ -4,7 +4,13 @@ import pytest
 from mcp.client import Client
 from mcp.client.stdio import StdioServerParameters
 from glitchrupt.server import create_server
-from glitchrupt.client import GlitchruptError
+from glitchrupt.client import CLAUDE_HOST_SESSION_ENV, GlitchruptError
+
+
+@pytest.fixture(autouse=True)
+def isolated_host_session(monkeypatch):
+    # Claude Code exports its Desktop session to tests run inside it; the registry fake takes no extra kwargs.
+    monkeypatch.delenv(CLAUDE_HOST_SESSION_ENV, raising=False)
 
 
 class NativeFake:

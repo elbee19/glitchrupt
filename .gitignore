@@ -11,3 +11,9 @@ dist/
 *.log
 .env
 .env.*
+
+# Local certificate fingerprint; keep personal signing identity out of public source.
+/.signing-identity
+
+# Local certificate fingerprint; keep personal signing identity out of public source.
+/.signing-identity

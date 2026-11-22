@@ -12,7 +12,9 @@ for SOUND in classic fracture brownout arc stutter; do
 done
 cp "$ROOT/assets/sounds/manifest.json" "$APP/Contents/Resources/Sounds/manifest.json"
 ARCH="$(uname -m)"
-xcrun swiftc -target "$ARCH-apple-macos14.0" -swift-version 5 -parse-as-library -warnings-as-errors -O -framework AppKit -framework CoreImage -framework ScreenCaptureKit -framework QuartzCore -framework AVFoundation "$ROOT"/Sources/*.swift -o "$APP/Contents/MacOS/Glitchrupt"
+# Keep this project's compiler intermediates on its build volume.
+mkdir -p "$ROOT/build/module-cache"
+xcrun swiftc -module-cache-path "$ROOT/build/module-cache" -target "$ARCH-apple-macos14.0" -swift-version 5 -parse-as-library -warnings-as-errors -O -framework AppKit -framework CoreImage -framework ScreenCaptureKit -framework QuartzCore -framework AVFoundation "$ROOT"/Sources/*.swift -o "$APP/Contents/MacOS/Glitchrupt"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -23,8 +25,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>Glitchrupt</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.0</string>
-<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleShortVersionString</key><string>0.4.0</string>
+<key>CFBundleVersion</key><string>4</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
@@ -33,6 +35,5 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 find "$APP" -type f -name '._*' -delete
-codesign --force --sign "${GLITCHRUPT_SIGN_IDENTITY:--}" --identifier local.glitchrupt.app "$APP"
-codesign --verify --deep --strict "$APP"
+bash "$ROOT/scripts/sign-app.sh" "$APP"
 echo "$APP"

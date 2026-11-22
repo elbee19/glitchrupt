@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 from . import __version__
-from .client import NativeClient, GlitchruptError, VARIANTS
+from .client import NativeClient, GlitchruptError, VARIANTS, with_default_claude_session
 
 
 def parser() -> argparse.ArgumentParser:
@@ -19,6 +19,10 @@ def parser() -> argparse.ArgumentParser:
         if name == "wait":
             sub.add_argument("key")
             sub.add_argument("--preview", action="store_true")
+            sub.add_argument("--chat-name", help="Short nonsensitive name shown in the banner and pending menu")
+            sub.add_argument("--reason", help="Short nonsensitive explanation of the requested input")
+            sub.add_argument("--claude-session-id", help="Claude Desktop local_<UUID> session identifier; inside Claude Code it is detected automatically when neither this nor --chat-id is given")
+            sub.add_argument("--chat-id", help="Canonical Codex chat UUID; opens only when the user clicks. Suppresses the automatic Claude Desktop session")
         else:
             sub.add_argument("--duration-ms", type=int, default=600)
         sub.add_argument("--volume", type=float, default=.28)
@@ -46,7 +50,10 @@ def main(argv: list[str] | None = None, *, client: NativeClient | None = None) -
         elif args.command == "app":
             result = native.launch()
         elif args.command == "wait":
-            result = native.wait(args.key, args.variant, args.volume, not args.silent, args.preview)
+            supplied = {field: getattr(args, field) for field in ("chat_name", "reason", "chat_id", "claude_session_id")
+                        if getattr(args, field) is not None}
+            metadata = with_default_claude_session(supplied)
+            result = native.wait(args.key, args.variant, args.volume, not args.silent, args.preview, **metadata)
         elif args.command == "resolve":
             result = native.resolve(args.key, args.key_prefix)
         elif args.command == "pending":

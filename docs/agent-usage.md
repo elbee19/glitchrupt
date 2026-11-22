@@ -55,6 +55,8 @@ Tools:
 
 The signal schema rejects booleans in numeric fields, fractional durations, nonfinite numbers, unknown variants and out-of-range values. There is no arbitrary command, URL, path, sound file, or filesystem input. A tool call can return `error` with a machine-readable `code`; hosts must inspect that status even when MCP transport delivery succeeds. Schema validation errors use MCP's tool-error response.
 
+Approval waits (`glitchrupt_wait_for_approval` and `glitchrupt wait`) accept an optional `claude_session_id` (Claude Desktop) or `chat_id` (Codex) so the banner's Open chat button can focus that thread. Inside Claude Code, when neither is given, Glitchrupt detects the current Claude Desktop session automatically from `CLAUDE_CODE_HOST_SESSION_ID`; an explicit value always wins, and a `chat_id` suppresses the automatic default.
+
 An example future user policy: “When this chat requires a decision from me, request one `classic` cue. Do not repeat while the same question remains unanswered. Respect app suppression and do not retry on timeout.” This is an example, not an enabled monitor. Read-only tool annotations mean no cue is played; `glitchrupt_status` may start the background app as documented.
 
 ## Private bridge and testing

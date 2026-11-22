@@ -27,12 +27,28 @@ sleep or a stalled process. Busy playback and cooldown defer the same group;
 they do not enqueue additional effects. A paused, permission-blocked, or Reduce
 Motion-suppressed repeating attempt records its suppression and schedules its next
 attempt 900 seconds later. One-shot entries are removed after suppression. Resolving every key in a group suppresses its second
-burst if that burst has not started. Muting agent cues also suppresses the
-second burst. Changing Reduce Motion before the second desktop burst suppresses
-it. Resolution cannot undo a burst that has already appeared.
+burst if that burst has not started. Pausing agent cues, a timed mute, or muting
+every key in an episode also suppresses the second burst. Changing Reduce Motion
+before the second desktop burst suppresses it. Resolution cannot undo a burst
+that has already appeared.
+
+Muting has two scopes. Per-request mute keeps a key registered with its
+deadline and context, but the registry never claims a muted key, so it plays
+nothing while muted. Unmuting a repeating key schedules its next reminder 900
+seconds later; it never replays deadlines missed while muted. An unclaimed
+one-shot that is unmuted plays its single cue at once. Re-registering a muted
+key keeps it muted, and `pending` reports `muted: true`. The timed mute is a
+wall-clock deadline (`agentCuesMutedUntil` in UserDefaults). Every agent cue
+path checks `agentCuesActive`, which is `agentsEnabled` and not inside a timed
+mute. The deadline expires on its own. Enabling agent cues, or clicking the
+menu's **Agent cues muted until <time>** item, ends it early. The settings
+checkbox stays bound to `agentsEnabled` alone.
+
+An explicit handover entry may carry an optional `muted` boolean. A missing
+value means unmuted.
 
 Use the Glitchrupt menu to preview an approval pair inside the tester, see the
-pending approval count, clear pending reminders, pause all agent cues, or quit.
+pending request list, open a requesting chat, preview the attention banner, clear pending reminders, pause all agent cues, or quit.
 The existing sound checkbox controls the pair's sound as well. The tester
 preview remains usable while agent cues are paused. Preview effects do not
 require Screen Recording permission.
@@ -51,5 +67,9 @@ xcrun swiftc -swift-version 5 -warnings-as-errors \
 The tests cover duplicate registration, settings/deadline preservation, due
 boundaries, coalescing, suppression status, exact and prefix resolution,
 second-burst cancellation eligibility, long-gap catch-up prevention, remaining
-time reporting, and clearing state. Native source compilation is a separate
-build check; these state tests do not capture or alter the desktop.
+time reporting, and clearing state. They also cover per-request mute (no claims
+while muted, an unmute deadline without an immediate burst, re-registration
+keeping the mute, muted snapshots, and resolving a muted key), restoring `muted`
+from a handover, and validation of the Claude entry link. Native source
+compilation is a separate build check; these state tests do not capture or
+alter the desktop.
